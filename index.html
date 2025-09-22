@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Site — Login / Admin</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <main class="card">
+    <h1>Site Login</h1>
+    <div id="login-section">
+      <input id="username" placeholder="username" />
+      <input id="password" placeholder="password" type="password" />
+      <button id="login-btn">Log in</button>
+      <p id="login-msg" class="muted"></p>
+    </div>
+
+    <div id="admin-section" class="hidden">
+      <h2>Admin: Create user</h2>
+      <input id="new-username" placeholder="new username" />
+      <input id="new-password" placeholder="new password" type="password" />
+      <select id="new-role">
+        <option value="user">user</option>
+        <option value="admin">admin</option>
+      </select>
+      <button id="create-btn">Create user</button>
+      <p id="create-msg" class="muted"></p>
+
+      <h3>Existing users</h3>
+      <button id="refresh-users">Refresh</button>
+      <ul id="users-list"></ul>
+      <button id="logout-btn">Log out</button>
+    </div>
+  </main>
+
+  <script>
+  // Configuration: set your backend URL here (example: https://my-backend.up.railway.app)
+  const BACKEND_URL = 'http://localhost:3000';
+
+  function el(id){return document.getElementById(id);}
+
+  async function post(path, body, token){
+    const res = await fetch(BACKEND_URL + path, {
+      method: 'POST',
+      headers: Object.assign({'Content-Type':'application/json'}, token ? {'Authorization':'Bearer '+token} : {}),
+      body: JSON.stringify(body)
+    });
+    return res.json().catch(()=>({ok:false, status: res.status}));
+  }
+
+  async function get(path, token){
+    const res = await fetch(BACKEND_URL + path, {
+      headers: token ? {'Authorization':'Bearer '+token} : {}
+    });
+    return res.json().catch(()=>({ok:false, status: res.status}));
+  }
+
+  function showAdmin(){ el('login-section').classList.add('hidden'); el('admin-section').classList.remove('hidden'); }
+  function showLogin(){ el('login-section').classList.remove('hidden'); el('admin-section').classList.add('hidden'); }
+
+  // login
+  el('login-btn').addEventListener('click', async ()=>{
+    el('login-msg').textContent = '...';
+    const u = el('username').value.trim();
+    const p = el('password').value;
+    if(!u||!p){ el('login-msg').textContent='enter username & password'; return; }
+    const data = await post('/login', { username: u, password: p });
+    if(data && data.token){
+      localStorage.setItem('site_token', data.token);
+      el('login-msg').textContent = 'logged in';
+      const me = parseJwt(data.token);
+      if(me.role === 'admin') { showAdmin(); loadUsers(); }
+      else { el('login-msg').textContent = 'not an admin — no admin panel'; }
+    } else {
+      el('login-msg').textContent = data && data.message ? data.message : 'login failed';
+    }
+  });
+
+  el('logout-btn').addEventListener('click', ()=>{
+    localStorage.removeItem('site_token');
+    showLogin();
+  });
+
+  // create user
+  el('create-btn').addEventListener('click', async ()=>{
+    el('create-msg').textContent = '...';
+    const token = localStorage.getItem('site_token');
+    const username = el('new-username').value.trim();
+    const password = el('new-password').value;
+    const role = el('new-role').value;
+    if(!username||!password){ el('create-msg').textContent='enter username & password'; return; }
+    const res = await post('/create-user', { username, password, role }, token);
+    if(res && res.ok){
+      el('create-msg').textContent = 'user created';
+      el('new-username').value=''; el('new-password').value='';
+      loadUsers();
+    } else {
+      el('create-msg').textContent = res && res.message ? res.message : 'failed';
+    }
+  });
+
+  el('refresh-users').addEventListener('click', loadUsers);
+
+  async function loadUsers(){
+    const token = localStorage.getItem('site_token');
+    const res = await get('/users', token);
+    const list = el('users-list');
+    list.innerHTML = '';
+    if(Array.isArray(res.users)){
+      res.users.forEach(u=>{
+        const li = document.createElement('li');
+        li.textContent = u.username + ' (' + u.role + ')';
+        list.appendChild(li);
+      });
+    } else {
+      list.innerHTML = '<li>failed to load users</li>';
+    }
+  }
+
+  // small JWT parser for role
+  function parseJwt (token) {
+    if(!token) return {};
+    try{
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+      return JSON.parse(jsonPayload);
+    } catch(e){ return {}; }
+  };
+
+  // on load: check token
+  (function(){
+    const t = localStorage.getItem('site_token');
+    if(!t) return showLogin();
+    const me = parseJwt(t);
+    if(me.role === 'admin') { showAdmin(); loadUsers(); }
+    else showLogin();
+  })();
+  </script>
+</body>
+</html>
